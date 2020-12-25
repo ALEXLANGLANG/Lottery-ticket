@@ -25,23 +25,77 @@ writer = SummaryWriter()
 import time
 # Custom Libraries
 import utils
-class argument:
-    def __init__(self, lr=1.2e-3,batch_size = 128,start_iter = 0,end_iter = 100,print_freq = 1,
-                 valid_freq = 1,resume = "store_true",prune_type= "lt",gpu = "0",
-                 dataset = "mnist" ,arch_type = "fc1",prune_percent  = 10,prune_iterations = 35):
-        self.lr = lr
-        self.batch_size = batch_size
-        self.start_iter = start_iter
-        self.end_iter = end_iter
-        self.print_freq = print_freq
-        self.valid_freq = valid_freq
-        self.resume = resume
-        self.prune_type = prune_type #reinit
-        self.gpu = gpu
-        self.dataset = dataset #"mnist | cifar10 | fashionmnist | cifar100"
-        self.arch_type = arch_type # "fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121"
-        self.prune_percent  = prune_percent 
-        self.prune_iterations = prune_iterations 
+
+# Function for Initialization
+def weight_init(m):
+    '''
+    Usage:
+        model = Model()
+        model.apply(weight_init)
+    '''
+    if isinstance(m, nn.Conv1d):
+        init.normal_(m.weight.data)
+        if m.bias is not None:
+            init.normal_(m.bias.data)
+    elif isinstance(m, nn.Conv2d):
+        init.xavier_normal_(m.weight.data)
+        if m.bias is not None:
+            init.normal_(m.bias.data)
+    elif isinstance(m, nn.Conv3d):
+        init.xavier_normal_(m.weight.data)
+        if m.bias is not None:
+            init.normal_(m.bias.data)
+    elif isinstance(m, nn.ConvTranspose1d):
+        init.normal_(m.weight.data)
+        if m.bias is not None:
+            init.normal_(m.bias.data)
+    elif isinstance(m, nn.ConvTranspose2d):
+        init.xavier_normal_(m.weight.data)
+        if m.bias is not None:
+            init.normal_(m.bias.data)
+    elif isinstance(m, nn.ConvTranspose3d):
+        init.xavier_normal_(m.weight.data)
+        if m.bias is not None:
+            init.normal_(m.bias.data)
+    elif isinstance(m, nn.BatchNorm1d):
+        init.normal_(m.weight.data, mean=1, std=0.02)
+        init.constant_(m.bias.data, 0)
+    elif isinstance(m, nn.BatchNorm2d):
+        init.normal_(m.weight.data, mean=1, std=0.02)
+        init.constant_(m.bias.data, 0)
+    elif isinstance(m, nn.BatchNorm3d):
+        init.normal_(m.weight.data, mean=1, std=0.02)
+        init.constant_(m.bias.data, 0)
+    elif isinstance(m, nn.Linear):
+        init.xavier_normal_(m.weight.data)
+        init.normal_(m.bias.data)
+    elif isinstance(m, nn.LSTM):
+        for param in m.parameters():
+            if len(param.shape) >= 2:
+                init.orthogonal_(param.data)
+            else:
+                init.normal_(param.data)
+    elif isinstance(m, nn.LSTMCell):
+        for param in m.parameters():
+            if len(param.shape) >= 2:
+                init.orthogonal_(param.data)
+            else:
+                init.normal_(param.data)
+    elif isinstance(m, nn.GRU):
+        for param in m.parameters():
+            if len(param.shape) >= 2:
+                init.orthogonal_(param.data)
+            else:
+                init.normal_(param.data)
+    elif isinstance(m, nn.GRUCell):
+        for param in m.parameters():
+            if len(param.shape) >= 2:
+                init.orthogonal_(param.data)
+            else:
+                init.normal_(param.data)
+
+                
+                
 def prune_percentage_nonzero(q = 10):
     global model 
     for n,m in model.named_modules():
@@ -85,7 +139,6 @@ def reintilize_weights(weight_init):
 def train(model, train_loader, optimizer, criterion):
     EPS = 1e-6
     model.train()
-    s = time.time()
     for batch_idx, (imgs, targets) in enumerate(train_loader):
         optimizer.zero_grad()
         
@@ -96,7 +149,6 @@ def train(model, train_loader, optimizer, criterion):
         train_loss.backward()
 #         mask_weights(False) #Mask gradients of weights to zero
         optimizer.step()
-    print(time.time()-s)
     return train_loss.item()
 
 
@@ -116,150 +168,184 @@ def test(model, test_loader, criterion):
         accuracy = 100. * correct / len(test_loader.dataset)
     return accuracy
 
+def get_mask_all():
+    global model
+    mask = []
+    for n, m in model.named_modules():
+        if isinstance(m, PrunedConv):
+            mask += [m.mask.cpu().numpy()]
+        if isinstance(m, PruneLinear):
+            mask += [m.mask.cpu().numpy()]
+    return mask
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-ITE=0
+
+def train_main(args):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ITE=0
+    reinit = True if args.prune_type=="reinit" else False
+
+    #Data Loader
+    transform=transforms.Compose([transforms.ToTensor(),transforms.Normalize((0.1307,), (0.3081,))])
+    if args.dataset == "mnist":
+        traindataset = datasets.MNIST('~/work/data/Xian', train=True, download=True,transform=transform)
+        testdataset = datasets.MNIST('~/work/data/Xian', train=False, transform=transform)
+        from archs.mnist import  LeNet5, fc1, vgg, resnet,AlexNet
+    # If you want to add extra datasets paste here
+    else:
+        print("\nWrong Dataset choice \n")
+        exit()
+
+    train_loader = torch.utils.data.DataLoader(traindataset, batch_size=args.batch_size, shuffle=True, num_workers=0,drop_last=False)
+    test_loader = torch.utils.data.DataLoader(testdataset, batch_size=args.batch_size, shuffle=False, num_workers=0,drop_last=True)
+
+    # Importing Network Architecture
+    global model
+    if args.arch_type == "fc1":
+        model = fc1.fc1().to(device)
+    elif args.arch_type == "lenet5":
+        model = LeNet5.LeNet5().to(device)
+    else:
+        print("\nWrong Model choice\n")
+        exit()
+
+    model.apply(weight_init)
+    # Copying and Saving Initial State
+    initial_state_dict = copy.deepcopy(model.state_dict())
+    utils.checkdir(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/")
+    torch.save(model, f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/initial_state_dict_{args.prune_type}.pth.tar")
 
 
-args = argument(end_iter = 50,arch_type ="lenet5")
-reinit = True if args.prune_type=="reinit" else False
+    # Optimizer and Loss
+    optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-4)
+    criterion = nn.CrossEntropyLoss() # Default was F.nll_loss
 
-#Data Loader
-transform=transforms.Compose([transforms.ToTensor(),transforms.Normalize((0.1307,), (0.3081,))])
-if args.dataset == "mnist":
-    traindataset = datasets.MNIST('~/work/data/Xian', train=True, download=True,transform=transform)
-    testdataset = datasets.MNIST('~/work/data/Xian', train=False, transform=transform)
-    from archs.mnist import  LeNet5, fc1, vgg, resnet,AlexNet
-# If you want to add extra datasets paste here
-else:
-    print("\nWrong Dataset choice \n")
-    exit()
-
-train_loader = torch.utils.data.DataLoader(traindataset, batch_size=args.batch_size, shuffle=True, num_workers=0,drop_last=False)
-test_loader = torch.utils.data.DataLoader(testdataset, batch_size=args.batch_size, shuffle=False, num_workers=0,drop_last=True)
-
-# Importing Network Architecture
-global model
-if args.arch_type == "fc1":
-    model = fc1.fc1().to(device)
-elif args.arch_type == "lenet5":
-    model = LeNet5.LeNet5().to(device)
-else:
-    print("\nWrong Model choice\n")
-    exit()
+    # Layer Looper
+    # for name, param in model.named_parameters():
+    #     print(name, param.size())
 
 
-# Copying and Saving Initial State
-initial_state_dict = copy.deepcopy(model.state_dict())
-utils.checkdir(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/")
-torch.save(model, f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/initial_state_dict_{args.prune_type}.pth.tar")
-
-
-# Optimizer and Loss
-optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-4)
-criterion = nn.CrossEntropyLoss() # Default was F.nll_loss
-
-# Layer Looper
-# for name, param in model.named_parameters():
-#     print(name, param.size())
-    
-    
-# Pruning
-# NOTE First Pruning Iteration is of No Compression
-bestacc = 0.0
-best_accuracy = 0
-ITERATION = args.prune_iterations
-comp = np.zeros(ITERATION,float)
-bestacc = np.zeros(ITERATION,float)
-step = 0
-all_loss = np.zeros(args.end_iter,float)
-all_accuracy = np.zeros(args.end_iter,float)
-
-for _ite in range(args.start_iter, ITERATION):
-    if not _ite == 0:
-        prune_percentage_nonzero(q = 10)
-        if reinit:
-            reintilize_weights(weight_init)
-        else:
-            initialize_weights(initial_state_dict)
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    print(f"\n--- Pruning Level [{ITE}:{_ite}/{ITERATION}]: ---")
-        
-    # Print the table of Nonzeros in each layer
-    comp1 = utils.print_nonzeros(model)
-    comp[_ite] = comp1
-    pbar = tqdm(range(args.end_iter))
-
-    for iter_ in pbar:
-
-        # Frequency for Testing
-        if iter_ % args.valid_freq == 0:
-            accuracy = test(model, test_loader, criterion)
-
-            # Save Weights
-            if accuracy > best_accuracy:
-                best_accuracy = accuracy
-                utils.checkdir(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/")
-                torch.save(model,f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/{_ite}_model_{args.prune_type}.pth.tar")
-
-        # Training
-        loss = train(model, train_loader, optimizer, criterion)
-        all_loss[iter_] = loss
-        all_accuracy[iter_] = accuracy
-
-        # Frequency for Printing Accuracy and Loss
-        if iter_ % args.print_freq == 0:
-            pbar.set_description(
-                f'Train Epoch: {iter_}/{args.end_iter} Loss: {loss:.6f} Accuracy: {accuracy:.2f}% Best Accuracy: {best_accuracy:.2f}%')       
-
-    writer.add_scalar('Accuracy/test', best_accuracy, comp1)
-    bestacc[_ite]=best_accuracy
-
-    # Plotting Loss (Training), Accuracy (Testing), Iteration Curve
-    #NOTE Loss is computed for every iteration while Accuracy is computed only for every {args.valid_freq} iterations. Therefore Accuracy saved is constant during the uncomputed iterations.
-    #NOTE Normalized the accuracy to [0,100] for ease of plotting.
-    plt.plot(np.arange(1,(args.end_iter)+1), 100*(all_loss - np.min(all_loss))/np.ptp(all_loss).astype(float), c="blue", label="Loss") 
-    plt.plot(np.arange(1,(args.end_iter)+1), all_accuracy, c="red", label="Accuracy") 
-    plt.title(f"Loss Vs Accuracy Vs Iterations ({args.dataset},{args.arch_type})") 
-    plt.xlabel("Iterations") 
-    plt.ylabel("Loss and Accuracy") 
-    plt.legend() 
-    plt.grid(color="gray") 
-    utils.checkdir(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/")
-    plt.savefig(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_LossVsAccuracy_{comp1}.png", dpi=1200) 
-    plt.close()
-
-    # Dump Plot values
-    utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
-    all_loss.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_all_loss_{comp1}.dat")
-    all_accuracy.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_all_accuracy_{comp1}.dat")
-
-    # Dumping mask
-    utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
-    with open(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_mask_{comp1}.pkl", 'wb') as fp:
-        pickle.dump(mask, fp)
-
-    # Making variables into 0
+    # Pruning
+    # NOTE First Pruning Iteration is of No Compression
+    bestacc = 0.0
     best_accuracy = 0
+    ITERATION = args.prune_iterations
+    comp = np.zeros(ITERATION,float)
+    bestacc = np.zeros(ITERATION,float)
+    step = 0
     all_loss = np.zeros(args.end_iter,float)
     all_accuracy = np.zeros(args.end_iter,float)
 
-# Dumping Values for Plotting
-utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
-comp.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_compression.dat")
-bestacc.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_bestaccuracy.dat")
+    for _ite in range(args.start_iter, ITERATION):
+        if not _ite == 0:
+            prune_percentage_nonzero(q = 10)
+            if reinit:
+                reintilize_weights(weight_init)
+            else:
+                initialize_weights(initial_state_dict)
+            optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+        print(f"\n--- Pruning Level [{ITE}:{_ite}/{ITERATION}]: ---")
 
-# Plotting
-a = np.arange(args.prune_iterations)
-plt.plot(a, bestacc, c="blue", label="Winning tickets") 
-plt.title(f"Test Accuracy vs Unpruned Weights Percentage ({args.dataset},{args.arch_type})") 
-plt.xlabel("Unpruned Weights Percentage") 
-plt.ylabel("test accuracy") 
-plt.xticks(a, comp, rotation ="vertical") 
-plt.ylim(0,100)
-plt.legend() 
-plt.grid(color="gray") 
-utils.checkdir(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/")
-plt.savefig(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_AccuracyVsWeights.png", dpi=1200) 
-plt.close()
+        # Print the table of Nonzeros in each layer
+        comp1 = utils.print_nonzeros(model)
+        comp[_ite] = comp1
+        pbar = tqdm(range(args.end_iter))
+
+        for iter_ in pbar:
+
+            # Frequency for Testing
+            if iter_ % args.valid_freq == 0:
+                accuracy = test(model, test_loader, criterion)
+
+                # Save Weights
+                if accuracy > best_accuracy:
+                    best_accuracy = accuracy
+                    utils.checkdir(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/")
+                    torch.save(model,f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/{_ite}_model_{args.prune_type}.pth.tar")
+
+            # Training
+            loss = train(model, train_loader, optimizer, criterion)
+            all_loss[iter_] = loss
+            all_accuracy[iter_] = accuracy
+
+            # Frequency for Printing Accuracy and Loss
+            if iter_ % args.print_freq == 0:
+                pbar.set_description(
+                    f'Train Epoch: {iter_}/{args.end_iter} Loss: {loss:.6f} Accuracy: {accuracy:.2f}% Best Accuracy: {best_accuracy:.2f}%')       
+
+        writer.add_scalar('Accuracy/test', best_accuracy, comp1)
+        bestacc[_ite]=best_accuracy
+
+        # Plotting Loss (Training), Accuracy (Testing), Iteration Curve
+        #NOTE Loss is computed for every iteration while Accuracy is computed only for every {args.valid_freq} iterations. Therefore Accuracy saved is constant during the uncomputed iterations.
+        #NOTE Normalized the accuracy to [0,100] for ease of plotting.
+        plt.plot(np.arange(1,(args.end_iter)+1), 100*(all_loss - np.min(all_loss))/np.ptp(all_loss).astype(float), c="blue", label="Loss") 
+        plt.plot(np.arange(1,(args.end_iter)+1), all_accuracy, c="red", label="Accuracy") 
+        plt.title(f"Loss Vs Accuracy Vs Iterations ({args.dataset},{args.arch_type})") 
+        plt.xlabel("Iterations") 
+        plt.ylabel("Loss and Accuracy") 
+        plt.legend() 
+        plt.grid(color="gray") 
+        utils.checkdir(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/")
+        plt.savefig(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_LossVsAccuracy_{comp1}.png", dpi=1200) 
+        plt.close()
+
+        # Dump Plot values
+        utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
+        all_loss.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_all_loss_{comp1}.dat")
+        all_accuracy.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_all_accuracy_{comp1}.dat")
+
+        # Dumping mask
+        mask = get_mask_all()
+        utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
+        with open(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_mask_{comp1}.pkl", 'wb') as fp:
+            pickle.dump(mask, fp)
+
+        # Making variables into 0
+        best_accuracy = 0
+        all_loss = np.zeros(args.end_iter,float)
+        all_accuracy = np.zeros(args.end_iter,float)
+
+    # Dumping Values for Plotting
+    utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
+    comp.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_compression.dat")
+    bestacc.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_bestaccuracy.dat")
+
+    # Plotting
+    a = np.arange(args.prune_iterations)
+    plt.plot(a, bestacc, c="blue", label="Winning tickets") 
+    plt.title(f"Test Accuracy vs Unpruned Weights Percentage ({args.dataset},{args.arch_type})") 
+    plt.xlabel("Unpruned Weights Percentage") 
+    plt.ylabel("test accuracy") 
+    plt.xticks(a, comp, rotation ="vertical") 
+    plt.ylim(0,100)
+    plt.legend() 
+    plt.grid(color="gray") 
+    utils.checkdir(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/")
+    plt.savefig(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_AccuracyVsWeights.png", dpi=1200) 
+    plt.close()
+    
+    
+    
+    
+class argument:
+    def __init__(self, lr=1.2e-3,batch_size = 128,start_iter = 0,end_iter = 100,print_freq = 1,
+                 valid_freq = 1,resume = "store_true",prune_type= "lt",gpu = "0",
+                 dataset = "mnist" ,arch_type = "fc1",prune_percent  = 10,prune_iterations = 35):
+        self.lr = lr
+        self.batch_size = batch_size
+        self.start_iter = start_iter
+        self.end_iter = end_iter
+        self.print_freq = print_freq
+        self.valid_freq = valid_freq
+        self.resume = resume
+        self.prune_type = prune_type #reinit
+        self.gpu = gpu
+        self.dataset = dataset #"mnist | cifar10 | fashionmnist | cifar100"
+        self.arch_type = arch_type # "fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121"
+        self.prune_percent  = prune_percent 
+        self.prune_iterations = prune_iterations 
+args = argument(end_iter = 2,arch_type ="lenet5",prune_percent  = 20,prune_iterations = 2)
+
+train_main(args)
+
