@@ -97,7 +97,8 @@ def weight_init(m):
                 
                 
 def prune_percentage_nonzero(q = 10):
-    global model 
+    global model
+    mask_weights()
     for n,m in model.named_modules():
         if isinstance(m, PrunedConv):
             m.prune_by_percentage(q = q)
@@ -188,8 +189,8 @@ def train_main(args):
     #Data Loader
     transform=transforms.Compose([transforms.ToTensor(),transforms.Normalize((0.1307,), (0.3081,))])
     if args.dataset == "mnist":
-        traindataset = datasets.MNIST('~/work/data/Xian', train=True, download=True,transform=transform)
-        testdataset = datasets.MNIST('~/work/data/Xian', train=False, transform=transform)
+        traindataset = datasets.MNIST('/local/data/Xian', train=True, download=True,transform=transform)
+        testdataset = datasets.MNIST('/local/data/Xian', train=False, transform=transform)
         from archs.mnist import  LeNet5, fc1, vgg, resnet,AlexNet
     # If you want to add extra datasets paste here
     else:
@@ -238,7 +239,7 @@ def train_main(args):
 
     for _ite in range(args.start_iter, ITERATION):
         if not _ite == 0:
-            prune_percentage_nonzero(q = 10)
+            prune_percentage_nonzero(q = args.prune_percent)
             if reinit:
                 reintilize_weights(weight_init)
             else:
@@ -345,7 +346,7 @@ class argument:
         self.arch_type = arch_type # "fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121"
         self.prune_percent  = prune_percent 
         self.prune_iterations = prune_iterations 
-args = argument(end_iter = 2,arch_type ="lenet5",prune_percent  = 20,prune_iterations = 2)
+args = argument(end_iter = 10,arch_type ="lenet5",prune_percent  = 20,prune_iterations = 30)
 
 train_main(args)
 
