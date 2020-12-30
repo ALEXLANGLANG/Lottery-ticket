@@ -148,7 +148,7 @@ def train(model, train_loader, optimizer, criterion):
         output = model(imgs)
         train_loss = criterion(output, targets)
         train_loss.backward()
-#         mask_weights(False) #Mask gradients of weights to zero
+        mask_weights(False) #Mask gradients of weights to zero
         optimizer.step()
     return train_loss.item()
 
@@ -189,8 +189,8 @@ def train_main(args):
     #Data Loader
     transform=transforms.Compose([transforms.ToTensor(),transforms.Normalize((0.1307,), (0.3081,))])
     if args.dataset == "mnist":
-        traindataset = datasets.MNIST('/local/data/Xian', train=True, download=True,transform=transform)
-        testdataset = datasets.MNIST('/local/data/Xian', train=False, transform=transform)
+        traindataset = datasets.MNIST('~/work/data/Xian', train=True, download=True,transform=transform)
+        testdataset = datasets.MNIST('~/work/data/Xian', train=False, transform=transform)
         from archs.mnist import  LeNet5, fc1, vgg, resnet,AlexNet
     # If you want to add extra datasets paste here
     else:
@@ -214,7 +214,7 @@ def train_main(args):
     # Copying and Saving Initial State
     initial_state_dict = copy.deepcopy(model.state_dict())
     utils.checkdir(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/")
-    torch.save(model, f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/initial_state_dict_{args.prune_type}.pth.tar")
+    torch.save(model, f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/initial_state_dict_{args.prune_type}.pt")
 
 
     # Optimizer and Loss
@@ -346,7 +346,11 @@ class argument:
         self.arch_type = arch_type # "fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121"
         self.prune_percent  = prune_percent 
         self.prune_iterations = prune_iterations 
-args = argument(end_iter = 10,arch_type ="lenet5",prune_percent  = 20,prune_iterations = 30)
+args = argument(end_iter = 20,arch_type ="lenet5",prune_percent  = 20,prune_iterations = 30)
 
 train_main(args)
+
+
+
+
 
